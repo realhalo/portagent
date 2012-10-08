@@ -3,4 +3,19 @@
 - possibly add UDP support, although its use seems limited.
 - possibly add IPV6 support, but the whole point of portagent is for ipv4/firewall restrictions...could still have a use in the future though.
 - possibly add bandwidth throttle, although it doesn't seem like portagent's roll.
+
 - possibly add a REWRITE instruction, on-the-fly stream modification, not sure if it's needed for anything yet.
+- stress test queue/etc(cut off the sender in the middle, hangs when it should give up--only frees when the server disconnects):
+	nc -lp 8080 >/dev/null 
+	cat /dev/urandom|nc 0 4040
+
+- pre-connected send/queueing of data, make sure it's triggered to start the send queue chain at some point once it's turned to connected
+- add a NO INITIAL SEND option
+- add KEY 'password' a and IF KEY 'password' or similar
+
+- find memory leaks
+`- causes encrypt/decrypt failure afterwords, from one side--no data sent, doesnt disconnect
+
+- default MAX QUEUE to non-infinie? can be abused possibly
+
+- perhaps make KEY SERVER/CLIENT at the root level, list of keys needed

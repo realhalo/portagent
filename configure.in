@@ -10,8 +10,10 @@ AC_PROG_MAKE_SET
 
 AC_HEADER_STDC
 
+AC_C_BIGENDIAN(AC_DEFINE(PA_BIG_ENDIAN, 1, Big endian),AC_DEFINE(PA_LITTLE_ENDIAN, 1, Little endian))
+
 AC_CHECK_HEADERS([ctype.h errno.h fcntl.h grp.h pwd.h regex.h signal.h stdarg.h stdio.h stdlib.h string.h strings.h netdb.h time.h unistd.h arpa/inet.h sys/fcntl.h sys/file.h sys/resource.h sys/socket.h sys/types.h sys/time.h netinet/in.h])
-AC_CHECK_FUNCS([chroot getrlimit initsetproctitle memmem setproctitle setsid setservent endservent])
+AC_CHECK_FUNCS([chroot getrlimit initsetproctitle memmem setproctitle setsid setservent endservent sethostent endhostent])
 
 AC_CHECK_LIB(nsl, gethostbyname)
 AC_CHECK_LIB(xnet, gethostbyname)

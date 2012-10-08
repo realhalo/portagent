@@ -1,3 +1,9 @@
+version 1.3:
+	- Revised the WRITE instruction to support CLIENT and SERVER writing. (formerly only supported client, still the default)
+	- Fixed bug that didn't forward data from the initial send procedure, in some situations. (immediate USE without IF conditions)
+	- Fixed setproctitle() memory leak.
+	- Fixed issue with CHROOT causing local DNS resolution failure. (/etc/hosts)
+
 version 1.2:
 	- Fixed issue with fseek() that caused portagent to fail reading portagent.conf on some systems.
 	- Fixed issue with CHROOT causing DNS resolution failure. (resolving library inaccessible)

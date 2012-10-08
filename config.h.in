@@ -1,5 +1,8 @@
 /* config.h.in.  Generated from configure.in by autoheader.  */
 
+/* Define if building universal (internal helper macro) */
+#undef AC_APPLE_UNIVERSAL_BUILD
+
 /* Define to 1 if you have the <arpa/inet.h> header file. */
 #undef HAVE_ARPA_INET_H
 
@@ -8,6 +11,9 @@
 
 /* Define to 1 if you have the <ctype.h> header file. */
 #undef HAVE_CTYPE_H
+
+/* Define to 1 if you have the `endhostent' function. */
+#undef HAVE_ENDHOSTENT
 
 /* Define to 1 if you have the `endservent' function. */
 #undef HAVE_ENDSERVENT
@@ -56,6 +62,9 @@
 
 /* Define to 1 if you have the <regex.h> header file. */
 #undef HAVE_REGEX_H
+
+/* Define to 1 if you have the `sethostent' function. */
+#undef HAVE_SETHOSTENT
 
 /* Define to 1 if you have the `setproctitle' function. */
 #undef HAVE_SETPROCTITLE
@@ -132,8 +141,26 @@
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
 
+/* Big endian */
+#undef PA_BIG_ENDIAN
+
 /* create debug-mode binary for testing. */
 #undef PA_DEBUG
 
+/* Little endian */
+#undef PA_LITTLE_ENDIAN
+
 /* Define to 1 if you have the ANSI C header files. */
 #undef STDC_HEADERS
+
+/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
+   significant byte first (like Motorola and SPARC, unlike Intel). */
+#if defined AC_APPLE_UNIVERSAL_BUILD
+# if defined __BIG_ENDIAN__
+#  define WORDS_BIGENDIAN 1
+# endif
+#else
+# ifndef WORDS_BIGENDIAN
+#  undef WORDS_BIGENDIAN
+# endif
+#endif

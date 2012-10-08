@@ -48,9 +48,11 @@ LISTEN 'port'
 .br
   [QUEUE BUFFER '\fInum\fR|\fIfmt\fR']
 .br
+  [REWRITE [CLIENT|SERVER] '\fIexpr\fR' AS '\fIstring\fR']
+.br
 
 .br
-    [WRITE '\fIstring\fR']
+    [WRITE [CLIENT|SERVER] '\fIstring\fR']
 .br
     [TIMEOUT '\fInum\fR']
 .br
@@ -72,7 +74,7 @@ LISTEN 'port'
 .br
 
 .br
-      [WRITE '\fIstring\fR']
+      [WRITE [CLIENT|SERVER] '\fIstring\fR']
 .br
       [TIMEOUT '\fInum\fR']
 .br
@@ -282,7 +284,22 @@ sets the maximum size of the initial read buffer per incomming connection, this 
 sets the maximum size of the queue buffer per incomming connection.  each connection has a send queue for situations where one side can send faster than the other can receive.  if the queue grows larger than the specified limit the connection will be dropped.  this instruction can be specified via an arbitrary number (assumed bytes) or a number followed by a B, K, M, or G. (ie. '8k' would be 8192 bytes)
 .PP
 .TP
-\fBWRITE '\fRstring\fB'\fR
+\fBREWRITE \fR[\fBCLIENT\fR|\fBSERVER\fR]\fB '\fRexpr\fB' \fBAS\fR '\fRstring\fB'\fR
+.br
+\fI\-\fR info: located in \fBLISTEN\fR hierarchy.
+.br
+\fI\-\fR info: has no hierarchy of its own.
+.br
+\fI\-\fR info: multiple instances allowed.
+.br
+\fI\-\fR info: not required.
+.br
+
+.br
+rewrites data that matches the specified (regex) expression sent from the client (or server) stream, and replaces it with the specified string.  \fBREWRITE\fR does not effect \fBWRITE\fR output.  no new\-line character is appended, all normal escape formats are supported. (ie. '\\r', '\\n', '\\xNN', '\\NNN' and so on)
+.PP
+.TP
+\fBWRITE \fR[\fBCLIENT\fR|\fBSERVER\fR]\fB '\fRstring\fB'\fR
 .br
 \fI\-\fR info: located in \fBLISTEN\fR or \fBTRY\fR hierarchy.
 .br
@@ -294,7 +311,7 @@ sets the maximum size of the queue buffer per incomming connection.  each connec
 .br
 
 .br
-writes the specified string to the incoming connection.  no new\-line character is appended, all normal escape formats are supported. (ie. '\\r', '\\n', '\\xNN', '\\NNN' and so on)
+writes the specified string to the client (or server) connection.  no new\-line character is appended, all normal escape formats are supported. (ie. '\\r', '\\n', '\\xNN', '\\NNN' and so on)
 .PP
 .TP
 \fBTIMEOUT '\fRnum\fB'\fR

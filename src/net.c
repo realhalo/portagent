@@ -71,7 +71,7 @@ signed int pa_shutdown(signed int s) {
 	return(-1);
 }
 
-/* send to a socket, or save it in the queue if there is one. */
+/* send to a socket, or save it in the queue if there is one.  does not handle encryption or splitting large buffers. */
 ssize_t pa_send(unsigned int i, unsigned char type, char *buf, size_t len, signed int flags) {
 	unsigned char active;
 	signed int fd;
@@ -90,7 +90,7 @@ ssize_t pa_send(unsigned int i, unsigned char type, char *buf, size_t len, signe
 		pa_conn[i]->conn_queue_active = 1;
 	}
 
-	/* ...or PA_QUEUE_CONN. */
+	/* ...or PA_QUEUE_FWD. */
 	else {
 		fd = pa_conn[i]->fwd_fd;
 		active = pa_conn[i]->fwd_queue_active;
@@ -108,7 +108,9 @@ ssize_t pa_send(unsigned int i, unsigned char type, char *buf, size_t len, signe
 	/* nothing in the queue, send it out now. */
 	else {
 
-		s = send(fd, buf, len, flags);
+		/* fd exist yet? */
+		if(fd < 0) s = -1;
+		else s = send(fd, buf, len, flags);
 
 		/* error? add it to the queue i guess. */
 		if(s < 0) {
@@ -131,15 +133,38 @@ ssize_t pa_send(unsigned int i, unsigned char type, char *buf, size_t len, signe
 	return(s);
 }
 
-/* splits data that -could- be larger than PA_BUFSIZE_GIANT into multiple segments, then passes to pa_send(). */
-ssize_t pa_send_split(unsigned int i, unsigned char type, char *buf, size_t len, signed int flags) {
+/* splits data that -could- be larger than PA_BUFSIZE_GIANT into multiple segments, then passes to pa_send().  handles encryption. */
+ssize_t pa_send_split(unsigned int i, unsigned char type, char *raw_buf, size_t raw_len, signed int flags) {
+	struct pa_bf_ctx_s *ctx;
+	char *seg, *enc_buf, *buf;
 	ssize_t s, t;
 	size_t slen;
-	char *seg;
+	unsigned int enc_len, len;
 
 #ifdef PA_DEBUG
 	puts("+++ pa_send_split()");
 #endif
+
+	ctx = NULL;
+
+	/* this should always be true. */
+	if(pa_conn && pa_conn[i]) {
+		if(type == PA_QUEUE_CONN && pa_conn[i]->ctx_conn)
+			ctx = pa_conn[i]->ctx_conn;
+
+		else if(type == PA_QUEUE_FWD && pa_conn[i]->ctx_fwd)
+			ctx = pa_conn[i]->ctx_fwd;
+	}
+
+	if(ctx)
+		enc_buf = (char *)pa_bf_encrypt_str(i, type, (unsigned char *)raw_buf, (unsigned int)raw_len, &enc_len);
+	else {
+		enc_buf = 0;
+		enc_len = 0;
+	}
+
+	buf = (enc_buf ? enc_buf : raw_buf);
+	len = (unsigned int)(enc_len ? enc_len : raw_len);
 
 	for(s = t = 0; t < len; t += PA_BUFSIZE_GIANT) {
 		slen = len - t;
@@ -154,12 +179,62 @@ ssize_t pa_send_split(unsigned int i, unsigned char type, char *buf, size_t len,
 		free(seg);
 	}
 
+	if(enc_buf)
+		free(enc_buf);
+
 #ifdef PA_DEBUG
 	puts("--- pa_send_split()");
 #endif
 
 	return(s);
 }
+
+/* split sending, tunnelling with decryption/rewriting.  */
+ssize_t pa_send_tunnel(unsigned int i, unsigned char type, char *buf, size_t len, unsigned char do_rewrite, unsigned char do_dec, signed int flags) {
+	char *dec, *rewrite;
+	unsigned int dec_len;
+	size_t rewrite_len;
+	ssize_t s;	
+
+#ifdef PA_DEBUG
+	puts("*** pa_send_tunnel()");
+#endif
+
+	s = 0;
+
+	/* encrypted tunnel. */
+	if(do_dec && (type==PA_QUEUE_CONN?pa_conn[i]->ctx_fwd:pa_conn[i]->ctx_conn)) {
+		if((dec = (char *)pa_bf_decrypt_str(i, (type==PA_QUEUE_CONN?PA_QUEUE_FWD:PA_QUEUE_CONN), (unsigned char *)buf, len, &dec_len))) {
+
+			/* rewrite needed? */
+			if(do_rewrite && (rewrite = pa_rewrite(pa_conn[i]->pa_root, (type==PA_QUEUE_CONN?PA_REWRITE_SERVER:PA_REWRITE_CLIENT), dec, dec_len, &rewrite_len))) {
+				s = pa_send_split(i, (type==PA_QUEUE_CONN?PA_QUEUE_CONN:PA_QUEUE_FWD), rewrite, rewrite_len, MSG_NOSIGNAL);
+				free(rewrite);
+			}
+			else
+				/* was pa_send. (v1.2 and below) */
+				s = pa_send_split(i, (type==PA_QUEUE_CONN?PA_QUEUE_CONN:PA_QUEUE_FWD), dec, dec_len, MSG_NOSIGNAL);
+
+			free(dec);
+		}
+	}
+
+	/* not encrypted. */
+	else {
+
+		/* rewrite needed? */
+		if(do_rewrite && (rewrite = pa_rewrite(pa_conn[i]->pa_root, (type==PA_QUEUE_CONN?PA_REWRITE_SERVER:PA_REWRITE_CLIENT), buf, len, &rewrite_len))) {
+			s = pa_send_split(i, (type==PA_QUEUE_CONN?PA_QUEUE_CONN:PA_QUEUE_FWD), rewrite, rewrite_len, MSG_NOSIGNAL);
+			free(rewrite);
+		}
+		else
+			/* was pa_send. (v1.2 and below) */
+			s = pa_send_split(i, (type==PA_QUEUE_CONN?PA_QUEUE_CONN:PA_QUEUE_FWD), buf, len, MSG_NOSIGNAL);
+	}
+
+	return(s);
+}
+
 
 /* get and return the highest listening fd, for select()'s. */
 signed int pa_find_high_fd() {
@@ -279,6 +354,7 @@ signed int pa_conn_add(signed int root_fd, signed int conn_fd) {
 
 /* set the values for our new/reused connection. */
 void pa_conn_set(unsigned int i, signed int root_fd, signed int conn_fd) {
+	char *ptr;
 
 #ifdef PA_DEBUG
 	puts("+++ pa_conn_set()");
@@ -303,6 +379,10 @@ void pa_conn_set(unsigned int i, signed int root_fd, signed int conn_fd) {
 	pa_conn[i]->conn_queue_active = 0;
 	pa_conn[i]->queue = 0;
 
+	/* encryption/decrytion structure, they will be added as needed. */
+	pa_conn[i]->ctx_fwd = 0;
+	pa_conn[i]->ctx_conn = 0;
+
 	pa_timeout_set(i, -1);
 
 	/* try to allocate our user-specified size buffer. */
@@ -319,7 +399,9 @@ void pa_conn_set(unsigned int i, signed int root_fd, signed int conn_fd) {
 	/* update. */
 #ifndef NO_SETPROCTITLE
 	pa_total++;
-	setproctitle("%u %s %s", pa_total, (pa_total == 1 ? "connection" : "connections"), pa_port_str());
+	ptr = pa_port_str();
+	setproctitle("%u %s %s", pa_total, (pa_total == 1 ? "connection" : "connections"), ptr);
+	free(ptr);
 #endif
 
 #ifdef PA_DEBUG
@@ -331,6 +413,7 @@ void pa_conn_set(unsigned int i, signed int root_fd, signed int conn_fd) {
 
 /* free up a connection slot to potentially be reused again later. */
 void pa_conn_free(unsigned int i) {
+	char *ptr;
 
 #ifdef PA_DEBUG
 	puts("+++ pa_conn_free()");
@@ -360,13 +443,22 @@ void pa_conn_free(unsigned int i) {
 	pa_conn[i]->data = 0;
 	pa_conn[i]->len = 0;
 
+	if(pa_conn[i]->ctx_conn)
+		free(pa_conn[i]->ctx_conn);
+	pa_conn[i]->ctx_conn = 0;
+	if(pa_conn[i]->ctx_fwd) 
+		free(pa_conn[i]->ctx_fwd);
+	pa_conn[i]->ctx_fwd = 0;
+
 	memset((char *)&pa_conn[i]->conn_sock, 0, sizeof(struct sockaddr_in));
 	memset((char *)&pa_conn[i]->fwd_sock, 0, sizeof(struct sockaddr_in));
 
 	/* update. */
 #ifndef NO_SETPROCTITLE
 	pa_total--;
-	setproctitle("%u %s %s", pa_total, (pa_total == 1 ? "connection" : "connections"), pa_port_str());
+	ptr = pa_port_str();
+	setproctitle("%u %s %s", pa_total, (pa_total == 1 ? "connection" : "connections"), ptr);
+	free(ptr);
 #endif
 
 #ifdef PA_DEBUG
@@ -378,6 +470,9 @@ void pa_conn_free(unsigned int i) {
 
 /* try to connect to a forwarded. */
 signed int pa_try_conn(unsigned int i, struct sockaddr_in sa) {
+	char *rewrite;
+	size_t rewrite_len;
+
 	if(i > pa_conn_i || pa_conn[i]->status == PA_CONN_REUSE) return(-1);
 
 #ifdef PA_DEBUG
@@ -422,9 +517,21 @@ signed int pa_try_conn(unsigned int i, struct sockaddr_in sa) {
 	else {
 		pa_conn[i]->status = PA_CONN_CONNECTED;
 
+		/* encrypted tunnel? send out identity. */
+		if(pa_conn[i]->ctx_fwd)
+			(void)pa_send(i, PA_QUEUE_FWD, pa_conn[i]->ctx_fwd->identity, PA_IDENTITY_LEN, MSG_NOSIGNAL);
+
 		/* we have initial data to send? send it. */
-		if(pa_conn[i]->len)
-			(void)pa_send_split(i, PA_QUEUE_FWD, pa_conn[i]->data, pa_conn[i]->len, MSG_NOSIGNAL);
+		if(pa_conn[i]->len) {
+
+			/* rewrite needed? */
+			if((rewrite = pa_rewrite(pa_conn[i]->pa_root, PA_REWRITE_CLIENT, pa_conn[i]->data, pa_conn[i]->len, &rewrite_len))) {
+				(void)pa_send_split(i, PA_QUEUE_FWD, rewrite, rewrite_len, MSG_NOSIGNAL);
+				free(rewrite);
+			}
+			else
+				(void)pa_send_split(i, PA_QUEUE_FWD, pa_conn[i]->data, pa_conn[i]->len, MSG_NOSIGNAL);
+		}
 	}
 
 #ifdef PA_DEBUG
@@ -476,10 +583,12 @@ signed int pa_listen_new(signed int fd) {
 
 /* we have activity on one of the sockets were listening on. */
 void pa_listen_read(fd_set fds, fd_set wfds) {
-	signed int i, l, r, s, se;
-	socklen_t selen;
-	char dump[PA_BUFSIZE_GIANT + 1];
 	struct pa_queue_s *pa_queue;
+	char dump[PA_BUFSIZE_GIANT + 1], *rewrite, *dec;
+	signed int i, l, r, s, se;
+	unsigned int dec_len;
+	size_t rewrite_len;
+	socklen_t selen;
 
 #ifdef PA_DEBUG
 	puts("+++ pa_listen_read()");
@@ -517,7 +626,6 @@ void pa_listen_read(fd_set fds, fd_set wfds) {
 					pa_log(i, "connection closed by remote: %s:%u", inet_ntoa(pa_conn[i]->conn_sock.sin_addr), htons(pa_conn[i]->conn_sock.sin_port));
 					pa_conn_free(i);
 				}
-
 			}
 
 			/* data to be handled from the connection. */
@@ -546,10 +654,47 @@ void pa_listen_read(fd_set fds, fd_set wfds) {
 					pa_conn[i]->complete = PA_COMPLETE_TRUE;
 				}
 
-				/* tunnel data: conn->fwd. */
-				if(pa_conn[i]->status == PA_CONN_CONNECTED)
-					(void)pa_send(i, PA_QUEUE_FWD, dump, r, MSG_NOSIGNAL);
+				/* expecting an encrypted tunnel. */
+				if(pa_conn[i]->ctx_conn && !pa_conn[i]->ctx_conn->validated) {
 
+					/* valid key? */
+					if(r >= PA_IDENTITY_LEN && !memcmp(pa_conn[i]->ctx_conn->identity, dump, PA_IDENTITY_LEN)) {
+						pa_conn[i]->ctx_conn->validated = 1;
+
+						r -= PA_IDENTITY_LEN;
+
+						/* validated, with extra data after the identity, move it over. */
+						if(r > 0)
+							memmove(dump, dump + PA_IDENTITY_LEN, r);
+					}
+
+					/* expected key for this connection and didn't get it, kill it. */
+					else
+						pa_conn_free(i);
+				}
+
+				/* tunnel data: conn->fwd. (v1.2 and earlier did not check for PA_CONN_CONNECTING) */
+				if(r > 0 && (pa_conn[i]->status == PA_CONN_CONNECTED || pa_conn[i]->status == PA_CONN_CONNECTING)) {
+
+					/* make sure the encryption identity is the first thing in the queue, sending is all that is needed to validate from the client side. */
+					if(pa_conn[i]->status == PA_CONN_CONNECTING && pa_conn[i]->ctx_fwd && !pa_conn[i]->ctx_fwd->validated) {
+						(void)pa_send(i, PA_QUEUE_FWD, pa_conn[i]->ctx_fwd->identity, PA_IDENTITY_LEN, MSG_NOSIGNAL);
+						pa_conn[i]->ctx_fwd->validated = 1;
+					}
+
+(void)pa_send_tunnel(i, PA_QUEUE_FWD, dump, r, 1, 1, MSG_NOSIGNAL);
+
+if(0) {
+					/* rewrite needed? */
+					if((rewrite = pa_rewrite(pa_conn[i]->pa_root, PA_REWRITE_CLIENT, dump, r, &rewrite_len))) {
+						(void)pa_send_split(i, PA_QUEUE_FWD, rewrite, rewrite_len, MSG_NOSIGNAL);
+						free(rewrite);
+					}
+					else
+						/* was pa_send. (v1.2 and below) */
+						(void)pa_send_split(i, PA_QUEUE_FWD, dump, r, MSG_NOSIGNAL);
+}
+				}
 			}
 		}
 
@@ -596,8 +741,45 @@ void pa_listen_read(fd_set fds, fd_set wfds) {
 				}
 
 				/* write what we read. */
-				else
-					(void)pa_send(i, PA_QUEUE_CONN, dump, r, MSG_NOSIGNAL);
+				else {
+
+
+
+
+(void)pa_send_tunnel(i, PA_QUEUE_CONN, dump, r, 1, 1, MSG_NOSIGNAL);
+
+if(0) {
+					/* encrypted tunnel. */
+					if(pa_conn[i]->ctx_fwd) {
+						if((dec = (char *)pa_bf_decrypt_str(i, PA_QUEUE_FWD, (unsigned char *)dump, r, &dec_len))) {
+
+							/* rewrite needed? */
+							if((rewrite = pa_rewrite(pa_conn[i]->pa_root, PA_REWRITE_SERVER, dec, dec_len, &rewrite_len))) {
+								(void)pa_send_split(i, PA_QUEUE_CONN, rewrite, rewrite_len, MSG_NOSIGNAL);
+								free(rewrite);
+							}
+							else
+								/* was pa_send. (v1.2 and below) */
+								(void)pa_send_split(i, PA_QUEUE_CONN, dec, dec_len, MSG_NOSIGNAL);
+
+							free(dec);
+						}
+					}
+
+					/* not encrypted. */
+					else {
+
+						/* rewrite needed? */
+						if((rewrite = pa_rewrite(pa_conn[i]->pa_root, PA_REWRITE_SERVER, dump, r, &rewrite_len))) {
+							(void)pa_send_split(i, PA_QUEUE_CONN, rewrite, rewrite_len, MSG_NOSIGNAL);
+							free(rewrite);
+						}
+						else
+							/* was pa_send. (v1.2 and below) */
+							(void)pa_send_split(i, PA_QUEUE_CONN, dump, r, MSG_NOSIGNAL);
+					}
+}
+				}
 			}
 
 			/* write activity? (initial connecting) */
@@ -622,9 +804,23 @@ void pa_listen_read(fd_set fds, fd_set wfds) {
 				else {
 					pa_conn[i]->status = PA_CONN_CONNECTED;
 
+					/* encrypted tunnel? send out our identity.  validated by sending. (only send once) */
+					if(pa_conn[i]->ctx_fwd && !pa_conn[i]->ctx_fwd->validated) {
+						(void)pa_send(i, PA_QUEUE_FWD, pa_conn[i]->ctx_fwd->identity, PA_IDENTITY_LEN, MSG_NOSIGNAL);
+						pa_conn[i]->ctx_fwd->validated = 1;
+					}
+
 					/* we have initial data to send? send it. */
-					if(pa_conn[i]->len)
-						(void)pa_send_split(i, PA_QUEUE_FWD, pa_conn[i]->data, pa_conn[i]->len, MSG_NOSIGNAL);
+					if(pa_conn[i]->len) {
+
+						/* rewrite needed? */
+						if((rewrite = pa_rewrite(pa_conn[i]->pa_root, PA_REWRITE_CLIENT, pa_conn[i]->data, pa_conn[i]->len, &rewrite_len))) {
+							(void)pa_send_split(i, PA_QUEUE_FWD, rewrite, rewrite_len, MSG_NOSIGNAL);
+							free(rewrite);
+						}
+						else
+							(void)pa_send_split(i, PA_QUEUE_FWD, pa_conn[i]->data, pa_conn[i]->len, MSG_NOSIGNAL);
+					}
 				}
 			}
 
@@ -852,10 +1048,53 @@ void pa_listen_loop() {
 	unsigned int j, k, w;
 	char *this_ins, *ptr;
 
+char wtf[1024];
+unsigned int wtf_size=(2+8+2+16+2+8);
+
 	fd_set fds, wfds;
 	struct timeval tv;
 
-	w = 0;
+	wtf[0] = 8;
+	wtf[1] = 0;
+	wtf[2] = 'a';
+	wtf[3] = 'a';
+	wtf[4] = 'a';
+	wtf[5] = 'a';
+	wtf[6] = 'b';
+	wtf[7] = 'b';
+	wtf[8] = 'b';
+	wtf[9] = 'b';
+
+	wtf[10] = 16;
+	wtf[11] = 0;
+	wtf[12] = 'c';
+	wtf[13] = 'c';
+	wtf[14] = 'c';
+	wtf[15] = 'c';
+	wtf[16] = 'd';
+	wtf[17] = 'd';
+	wtf[18] = 'd';
+	wtf[19] = 'd';
+	wtf[20] = 'e';
+	wtf[21] = 'e';
+	wtf[22] = 'e';
+	wtf[23] = 'e';
+	wtf[24] = 'f';
+	wtf[25] = 'f';
+	wtf[26] = 'f';
+	wtf[27] = 'f';
+
+	wtf[28] = 8;
+	wtf[29] = 0;
+	wtf[30] = '0';
+	wtf[31] = '0';
+	wtf[32] = '0';
+	wtf[33] = '0';
+	wtf[34] = '1';
+	wtf[35] = '1';
+	wtf[36] = '1';
+	wtf[37] = '1';
+
 
 	/* select() forever, hopefully. */
 	while(1) {
@@ -898,15 +1137,19 @@ void pa_listen_loop() {
 						if(iffirst < 0) pa_timeout_set(i, atoi(this_ins));
 						pa_conn[i]->pa_ins_i++; /* NEXT. */
 						break;
-					case PA_WRITE_INSIDE:
+					case PA_WRITE_SERVER:
 						if(iffirst < 0) {
-							if(pa_conn[i]->fwd_fd >= 0 && pa_conn[i]->status == PA_CONN_CONNECTED)
-								(void)pa_send_split(i, PA_QUEUE_FWD, this_ins, this_len, MSG_NOSIGNAL);
+
+							/* formerly would drop data, instead of queueing it for connections that are not fully connected. */
+							/* if(pa_conn[i]->fwd_fd >= 0 && pa_conn[i]->status == PA_CONN_CONNECTED) */
+							(void)pa_send_split(i, PA_QUEUE_FWD, this_ins, this_len, MSG_NOSIGNAL);
 						}
 						pa_conn[i]->pa_ins_i++; /* NEXT. */
 						break;
-					case PA_WRITE_OUTSIDE:
+					case PA_WRITE_CLIENT:
 						if(iffirst < 0) {
+
+							/* this should always be true. */
 							if(pa_conn[i]->conn_fd >= 0)
 								(void)pa_send_split(i, PA_QUEUE_CONN, this_ins, this_len, MSG_NOSIGNAL);
 						}
@@ -927,8 +1170,27 @@ void pa_listen_loop() {
 							pa_conn[i]->pa_ins_i++; /* NEXT. */
 						}
 						break;
+					case PA_KEY_CLIENT:
+					case PA_KEY_SERVER:
+
+						/* set the key/enable encryption for this connection. (tunnel) */
+						pa_bf_setup(i, (unsigned char *)this_ins, (unsigned int)this_len, this_type);
+						pa_conn[i]->pa_ins_i++; /* NEXT. */
+
+
+/*
+pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf, 1, 0);
+pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf+1, 2, 0);
+pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf+3, 30, 0);
+
+*/
+//pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf, wtf_size-2, 0);
+//pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf+(wtf_size-2), 2, 0);
+
+						break;
 					case PA_IP:
 					case PA_IP_NOT:
+
 						/* the original "IF" should be good if we want to care about this. */
 						if(iflevel == PA_IFLEVEL_GOOD) {
 
@@ -946,6 +1208,7 @@ void pa_listen_loop() {
 						break;
 					case PA_PORT:
 					case PA_PORT_NOT:
+
 						/* the original "IF" should be good if we want to care about this. */
 						if(iflevel == PA_IFLEVEL_GOOD) {
 

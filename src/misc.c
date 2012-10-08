@@ -422,6 +422,12 @@ struct sockaddr_in pa_atos(char *str) {
 			freeaddrinfo(res);
 		}
 #else
+
+		/* incase we need to resolve /etc/hosts domains. */
+#ifdef HAVE_SETHOSTENT
+		if(pa_conf.chroot)
+			sethostent(1);
+#endif
 		if((t = gethostbyname(buf)))
 			memcpy((char *)&sa.sin_addr.s_addr, (char *)t->h_addr, sizeof(sa.sin_addr.s_addr));
 #endif
@@ -433,7 +439,8 @@ struct sockaddr_in pa_atos(char *str) {
 
 	/* allow post-chroot() "word" port name resolutions to work. */
 #ifdef HAVE_SETSERVENT
-	setservent(1);
+	if(pa_conf.chroot)
+		setservent(1);
 #endif
 
 	/* string representation of a port? */
@@ -528,6 +535,10 @@ void pa_set_dir(char *dir) {
 		setservent(1);
 #endif
 
+		/* incase we need to resolve /etc/hosts domains. */
+#ifdef HAVE_SETHOSTENT
+		sethostent(1);
+#endif
 		if(chroot(dir))
 			pa_error(PA_MSG_ERR, "failed to chroot to specified directory.");
 
@@ -560,6 +571,18 @@ void pa_set_perm(uid_t uid, gid_t gid) {
 	pa_log(PA_MSG_INFO, "portagent permissions change: userid=%u, groupid=%u", getuid(), getgid());
 
 	return;
+}
+
+/* calculate crcs. (used for encryption identity detection) */
+unsigned int pa_crc32(unsigned char *buf, unsigned int len)
+{
+	unsigned char *end;
+	unsigned int crc = 0;
+
+	crc = ~crc;
+	for (end = buf + len; buf < end; ++buf)
+		crc = pa_crc32_table[(crc ^ *buf) & 0xff] ^ (crc >> 8);
+	return ~crc;
 }
 
 /* breaks apart a "1M1K"-style filesize strings into integer (byte) form. */
@@ -716,13 +739,7 @@ unsigned char pa_regcmp(char *str, char *exp) {
 
 	r = 0;
 
-#ifdef REG_EXTENDED
-#define PA_REG_BITS (REG_ICASE | REG_NOSUB | REG_EXTENDED)
-#else
-#define PA_REG_BITS (REG_ICASE | REG_NOSUB)
-#endif
-
-	if (!regcomp(&re, exp, PA_REG_BITS)) {
+	if (!regcomp(&re, exp, REG_EXTENDED_FIX|REG_NOSUB)) {
 		if (!regexec(&re, str, 0, NULL, 0)){
 			r = 1;
 		}
@@ -730,6 +747,77 @@ unsigned char pa_regcmp(char *str, char *exp) {
 	}
 
 	return(r);
+}
+
+/* handles "REWRITE" style comparisons. */
+char *pa_rewrite(unsigned int i, unsigned char type, char *buf, size_t len, size_t *new_len) {
+	unsigned int j, off;
+	signed int diff, this_diff, this_len;
+	char *rewrite = NULL;
+        regmatch_t pm;
+
+#ifdef PA_DEBUG
+	puts("*** pa_rewrite()");
+#endif
+
+	/* even worth proceeding? */
+	if(pa_root[i]->pa_rewrite_i < 1 || !pa_root[i]->pa_rewrite[0])
+		return(NULL);
+
+	/* run through all the rewrites for this root connection. */
+	for(this_diff = this_len = diff = off = j = 0; j <= pa_root[i]->pa_rewrite_i && pa_root[i]->pa_rewrite[j]; j++, off = 0) {
+
+		/* is it the conn or fwd we're rewriting? */
+		if((type == PA_REWRITE_CLIENT && pa_root[i]->pa_rewrite[j]->type == PA_REWRITE_CLIENT)
+		|| (type == PA_REWRITE_SERVER && pa_root[i]->pa_rewrite[j]->type == PA_REWRITE_SERVER)) {
+
+			for(off = 0; !regexec(&pa_root[i]->pa_rewrite[j]->pattern, (rewrite ? rewrite : buf) + off, 1, &pm, (off ? REG_NOTBOL : 0)); off += pm.rm_eo) {
+
+				/* first match? allocate the initial buffer. */
+				if(rewrite == NULL) {
+					if(!(rewrite = (char *)malloc(len + 1)))
+						pa_error(PA_MSG_ERR, "failed to allocate memory for rewrite parser.");
+					memset(rewrite, 0, len + 1);
+					memcpy(rewrite, buf, len);
+				}
+
+				/* difference in size? re-allocate accordingly. */
+				this_len = pm.rm_eo - pm.rm_so;
+				this_diff = pa_root[i]->pa_rewrite[j]->len - (pm.rm_eo - pm.rm_so);
+				if(pa_root[i]->pa_rewrite[j]->len - this_len != 0) {
+					diff += this_diff;
+
+					/* we need to expand this now, to grow.  if we're shrinking we want to keep it for the memmove. */
+					if(this_diff > 0)
+						if(!(rewrite = (char *)realloc(rewrite, len + diff + 1)))
+							pa_error(PA_MSG_ERR, "failed to re-allocate memory for rewrite parser.");
+				}
+
+				/* move the rest of the buffer over as needed. */
+				memmove(rewrite + (pm.rm_eo + off + this_diff), rewrite + (pm.rm_eo + off), (len + (diff - this_diff)) - (pm.rm_eo + off) + 1);
+
+				/* copy the replacement data/string over. */
+				memcpy(rewrite + (pm.rm_so + off), pa_root[i]->pa_rewrite[j]->replace, pa_root[i]->pa_rewrite[j]->len);
+
+				/* jump over the added word. */
+				off += this_diff;
+
+				/* we didn't shrink this from above cause we needed it for the move/copy, now we can shrink. */
+				if(this_diff < 0)
+					if(!(rewrite = (char *)realloc(rewrite, len + diff + 1)))
+						pa_error(PA_MSG_ERR, "failed to re-allocate memory for rewrite parser.");
+
+			}
+
+		}
+
+	}
+
+	/* write out a new length, if provided. */
+	if(new_len)
+		*new_len = len + diff;
+
+	return(rewrite);
 }
 
 void pa_exit(signed int e) {
@@ -756,10 +844,16 @@ void pa_exit(signed int e) {
 	if(pa_conf.pidfs) fclose(pa_conf.pidfs);
 	if(pa_conf.logfs) fclose(pa_conf.logfs);
 
-	/* release service database, if chroot() */
-#ifdef HAVE_ENDSERVENT
-	if(pa_conf.chroot) endservent();
+	/* release host/service database, if chroot() */
+	if(pa_conf.chroot) {
+#ifdef HAVE_ENDHOSTENT
+		endhostent();
 #endif
+#ifdef HAVE_ENDSERVENT
+		endservent();
+#endif
+
+	}
 
 	exit(e);
 }

@@ -30,6 +30,9 @@ extern char **environ;
 
 /* process begin. */
 int main(signed int argc, char **argv) {
+#ifndef NO_SETPROCTITLE
+	char *ptr;
+#endif
 
 	/* just a version dump? */
 	if(argc > 1 && !strcmp(argv[1], "-v")) {
@@ -54,7 +57,9 @@ int main(signed int argc, char **argv) {
 	/* make proctitle show what's going on. */
 #ifndef NO_SETPROCTITLE
 	initsetproctitle(argc, argv, environ);
-	setproctitle("0 connections %s", pa_port_str());
+	ptr = pa_port_str();
+	setproctitle("0 connections %s", ptr);
+	free(ptr);
 #endif
 
 	/* daemonize ourself. */

@@ -77,9 +77,9 @@ unsigned char pa_instruction_type(char *instruction) {
 	else if(!strcasecmp(instruction, "IP NOT")) return(PA_IP_NOT);
 	else if(!strcasecmp(instruction, "PORT")) return(PA_PORT);
 	else if(!strcasecmp(instruction, "PORT NOT")) return(PA_PORT_NOT);
-	else if(!strcasecmp(instruction, "WRITE INSIDE")) return(PA_WRITE_INSIDE);
-	else if(!strcasecmp(instruction, "WRITE OUTSIDE")) return(PA_WRITE_OUTSIDE);
-	else if(!strcasecmp(instruction, "WRITE")) return(PA_WRITE_OUTSIDE);
+	else if(!strcasecmp(instruction, "WRITE CLIENT")) return(PA_WRITE_CLIENT);
+	else if(!strcasecmp(instruction, "WRITE SERVER")) return(PA_WRITE_SERVER);
+	else if(!strcasecmp(instruction, "WRITE")) return(PA_WRITE_CLIENT);
 	else if(!strcasecmp(instruction, "TIMEOUT")) return(PA_TIMEOUT);
 	else if(!strcasecmp(instruction, "LISTEN")) return(PA_LISTEN);
 	else if(!strcasecmp(instruction, "LISTEN ON")) return(PA_LISTEN);
@@ -96,6 +96,13 @@ unsigned char pa_instruction_type(char *instruction) {
 	else if(!strcasecmp(instruction, "USER")) return(PA_USER);
 	else if(!strcasecmp(instruction, "GROUP")) return(PA_GROUP);
 	else if(!strcasecmp(instruction, "CHROOT")) return(PA_CHROOT);
+	else if(!strcasecmp(instruction, "REWRITE CLIENT")) return(PA_REWRITE_CLIENT);
+	else if(!strcasecmp(instruction, "REWRITE SERVER")) return(PA_REWRITE_SERVER);
+	else if(!strcasecmp(instruction, "REWRITE")) return(PA_REWRITE_CLIENT);
+	else if(!strcasecmp(instruction, "AS")) return(PA_AS);
+	else if(!strcasecmp(instruction, "KEY CLIENT")) return(PA_KEY_CLIENT);
+	else if(!strcasecmp(instruction, "KEY SERVER")) return(PA_KEY_SERVER);
+	else if(!strcasecmp(instruction, "KEY")) return(PA_KEY_CLIENT);
 	else return(PA_NONE);
 }
 
@@ -222,6 +229,7 @@ void pa_conf_parser(char *conf_file) {
 #endif
 
 	/* default conf settings. */
+	pa_conf.ctx_cache = NULL;
 	pa_conf.logfs = NULL;
 	pa_conf.logfile = NULL;
 	pa_conf.pidfs = NULL;
@@ -331,6 +339,7 @@ void pa_conf_parser(char *conf_file) {
 							pa_root[pa_root_i]->fd = -1;
 
 							pa_root[pa_root_i]->pa_ins_i = 0;
+							pa_root[pa_root_i]->pa_rewrite_i = 0;
 
 							pa_root[pa_root_i]->backlog = 0;
 
@@ -355,7 +364,15 @@ void pa_conf_parser(char *conf_file) {
 					case PA_IP_NOT:
 					case PA_PORT:
 					case PA_PORT_NOT:
-						if(nest != PA_IF) nest = PA_BAD_INS;
+						break;
+					case PA_REWRITE_CLIENT:
+					case PA_REWRITE_SERVER:
+						if(nest != PA_LISTEN) nest = PA_BAD_INS;
+						else nest = type;
+						break;
+					case PA_AS:
+						if(nest != PA_REWRITE_CLIENT && nest != PA_REWRITE_SERVER) nest = PA_BAD_INS;
+						else nest = PA_LISTEN;
 						break;
 					case PA_USE:
 						if(nest != PA_LISTEN && nest != PA_IF) nest = PA_BAD_INS;
@@ -365,11 +382,13 @@ void pa_conf_parser(char *conf_file) {
 					case PA_INITIAL:
 					case PA_QUEUE:
 					case PA_LIMIT:
-					case PA_WRITE_INSIDE:
-					case PA_WRITE_OUTSIDE:
+					case PA_WRITE_CLIENT:
+					case PA_WRITE_SERVER:
 					case PA_WITH:
 					case PA_TIMEOUT:
 					case PA_TRY:
+					case PA_KEY_CLIENT:
+					case PA_KEY_SERVER:
 						if(nest != PA_LISTEN) nest = PA_BAD_INS;
 						break;
 					default:
@@ -396,7 +415,8 @@ void pa_conf_parser(char *conf_file) {
 				fseek(fp, -(int)(i + 1), SEEK_CUR);
 				fread(buf, 1, i, fp);
 
-				if(!(len = pa_literal_parser(buf)))
+				/* allow blank "AS ''" instructions, only current case needed. */
+				if(!(len = pa_literal_parser(buf)) && type != PA_AS)
 					pa_error(PA_MSG_ERR, "%s:%u:%u: blank instruction value.", conf_file, l, c);
 
 				/* +1 to not read the single-quote for the next run. */
@@ -507,6 +527,44 @@ void pa_conf_parser(char *conf_file) {
 							pa_error(PA_MSG_ERR, "%s:%u:%u: bad limit value: %s", conf_file, l, c, buf);
 						free(buf);
 						break;
+					case PA_REWRITE_CLIENT:
+					case PA_REWRITE_SERVER:
+
+						/* first rewrite? */
+						if(!pa_root[pa_root_i]->pa_rewrite_i) {
+							if(!(pa_root[pa_root_i]->pa_rewrite = (struct pa_rewrite_s **)malloc(sizeof(struct pa_rewrite_s *) + 2)))
+								pa_error(PA_MSG_ERR, "failed to allocate memory for rewrite structure.");
+						}
+
+						/* just another rewrite. */
+						else {
+							if(!(pa_root[pa_root_i]->pa_rewrite = (struct pa_rewrite_s **)realloc(pa_root[pa_root_i]->pa_rewrite, sizeof(struct pa_rewrite_s *) * (pa_root[pa_root_i]->pa_rewrite_i + 2))))
+								pa_error(PA_MSG_ERR, "failed to re-allocate memory for rewrite structure.");
+						}
+
+						/* add our rewrite data. */
+						if(!(pa_root[pa_root_i]->pa_rewrite[pa_root[pa_root_i]->pa_rewrite_i] = (struct pa_rewrite_s *)malloc(sizeof(struct pa_rewrite_s) + 1)))
+							pa_error(PA_MSG_ERR, "failed to allocate memory for an element of rewrite structure.");
+
+        					/* compile it now, report errors. (since this will be used a lot it's best to only compile it once, now) */
+						if(regcomp (&pa_root[pa_root_i]->pa_rewrite[pa_root[pa_root_i]->pa_rewrite_i]->pattern, buf, REG_EXTENDED_FIX))
+							pa_error(PA_MSG_ERR, "%s:%u:%u: could not compile regular expression: %s", conf_file, l, c, buf);
+
+						pa_root[pa_root_i]->pa_rewrite[pa_root[pa_root_i]->pa_rewrite_i]->type = type;
+						pa_root[pa_root_i]->pa_rewrite[pa_root[pa_root_i]->pa_rewrite_i]->replace = NULL;
+						pa_root[pa_root_i]->pa_rewrite[pa_root[pa_root_i]->pa_rewrite_i]->len = 0;
+
+						free(buf);
+
+						break;
+					case PA_AS:
+						pa_root[pa_root_i]->pa_rewrite[pa_root[pa_root_i]->pa_rewrite_i]->replace = buf;
+						pa_root[pa_root_i]->pa_rewrite[pa_root[pa_root_i]->pa_rewrite_i]->len = len;
+
+						/* entry ready / increment total. */
+						pa_root[pa_root_i]->pa_rewrite_i++;
+
+						break;
 					case PA_IF:
 					case PA_IFL:
 					case PA_IFR:
@@ -516,10 +574,11 @@ void pa_conf_parser(char *conf_file) {
 					case PA_PORT:
 					case PA_PORT_NOT:
 					case PA_USE:
-					case PA_WRITE_INSIDE:
-					case PA_WRITE_OUTSIDE:
+					case PA_WRITE_CLIENT:
+					case PA_WRITE_SERVER:
 					case PA_TRY:
-
+					case PA_KEY_CLIENT:
+					case PA_KEY_SERVER:
 						/* first instruction? */
 						if(!pa_root[pa_root_i]->pa_ins_i) {
 							if(!(pa_root[pa_root_i]->pa_ins = (struct pa_ins_s **)malloc(sizeof(struct pa_ins_s *) + 2)))
@@ -570,6 +629,7 @@ void pa_conf_parser(char *conf_file) {
 	if(mode) pa_error(PA_MSG_ERR, "%s:%u:%u: reached EOF during open instruction statement.", conf_file, l, c);
 	else if(nest != PA_LISTEN) pa_error(PA_MSG_ERR, "%s:%u:%u: reached EOF inside a non-listen nested statement.", conf_file, l, c);
 	else if(pa_root_i < 0) pa_error(PA_MSG_ERR, "%s:%u:%u: reached EOF and not listening on any ports.", conf_file, l, c);
+
 
 	/* one more check...redundant. */
 	if(!pa_root[pa_root_i]->backlog) pa_root[pa_root_i]->backlog = PA_DFL_LISTEN_BACKLOG;

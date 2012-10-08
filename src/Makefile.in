@@ -1,5 +1,5 @@
-SOURCES = conf.c misc.c msg.c net.c portagent.c title.c
-OBJECTS = conf.o misc.o msg.o net.o portagent.o title.o
+SOURCES = bf.c conf.c misc.c msg.c net.c portagent.c title.c
+OBJECTS = bf.o conf.o misc.o msg.o net.o portagent.o title.o
 OUTPUT = portagent
 CC = gcc
 LIBS = @LIBS@
