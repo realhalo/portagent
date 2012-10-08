@@ -1,0 +1,21 @@
+Begin4
+Title:		portagent
+Version:	%VERSION%
+Entered-date:	%LSMTIME%
+Description:	portagent is a POSIX transparent proxy routing daemon 
+that allows multiple arbitrary services to run on a single arbitrary 
+port. The main intention of portagent is for situations that need 
+more services open to the world than open ports prohibit.
+Keywords:	portagent, proxy, port sharing, port switch, port routing
+Copying-policy:	GPL
+Author:		v9@fakehalo.us (vade79)
+Maintained-by:	v9@fakehalo.us (vade79)
+Primary-site:	portagent.sourceforge.net /
+		%GZSIZE%
+		%BZ2SIZE%
+Alternate-site:	fakehalo.us /portagent
+		%GZSIZE%
+		%BZ2SIZE%
+Platforms:	C Compiler ANSI/POSIX (GNU gcc). Built for Linux, FreeBSD, 
+OpenBSD, OSX, and Solaris. Most likely compliant on other operating systems.
+End

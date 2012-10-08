@@ -1,0 +1,32 @@
+#!/bin/bash
+# this is just for me (project maintainer) to automatically make the
+# package.  don't forget to rename the root package directory to
+# 'portagent', if it isnt already.
+
+# start script.
+NOCOLOR=1
+CMPTIME=`date "+%Y\/%m\/%d %T %Z"`
+LSMTIME=`date "+%Y-%m-%d"`
+VERSION=`cat version | grep -v "#"`
+
+rm -f portagent-*
+cd ..
+make clean 1>/dev/null 2>&1
+echo $VERSION>VERSION
+sed "s/%VERSION%/$VERSION/g;s/%CMPTIME%/$CMPTIME/g" src/portagent.h.in>src/portagent.h
+sed "s/%VERSION%/$VERSION/g;s/%GZSIZE%/0 portagent-${VERSION}.tar.gz/g;s/%BZ2SIZE%/0 portagent-${VERSION}.tar.bz2/g;s/%LSMTIME%/$LSMTIME/g;" portagent.lsm.in>portagent.lsm
+md5sum * */* 1>MD5SUM 2>/dev/null
+touch * */*
+cd ..
+mv portagent portagent-${VERSION}
+tar -c portagent-${VERSION}/>/tmp/portagent-${VERSION}.tar
+gzip /tmp/portagent-${VERSION}.tar
+tar -c portagent-${VERSION}/>/tmp/portagent-${VERSION}.tar
+bzip2 /tmp/portagent-${VERSION}.tar
+# doesn't effect the packaged version from here on.
+mv portagent-${VERSION} portagent
+mv /tmp/portagent-${VERSION}.* portagent/adm/ 
+cd portagent/adm
+GZSIZE=`wc -c portagent-${VERSION}.tar.gz|awk {'print $1'}`
+BZ2SIZE=`wc -c portagent-${VERSION}.tar.bz2|awk {'print $1'}`
+sed "s/%VERSION%/$VERSION/g;s/%GZSIZE%/$GZSIZE portagent-${VERSION}.tar.gz/g;s/%BZ2SIZE%/$BZ2SIZE portagent-${VERSION}.tar.bz2/g;s/%LSMTIME%/$LSMTIME/g" ../portagent.lsm.in>../portagent.lsm

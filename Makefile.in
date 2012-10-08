@@ -1,0 +1,15 @@
+PREFIX=@prefix@
+XX_PREFIX=@xx_prefix@
+MANDIR=@mandir@
+INSTALL=@INSTALL@
+
+all:
+	cd src; make; cd ..
+clean:
+	cd src; make clean; rm -f Makefile; cd ..; rm -f Makefile man/portagent.8 etc/portagent.conf config.cache config.status config.h config.log
+
+distclean: clean
+
+install: all
+	$(INSTALL) -o 0 -g 0 -m 755 src/portagent ${PREFIX}/sbin/
+	$(INSTALL) -o 0 -g 0 -m 644 man/portagent.8 $(MANDIR)/man8/

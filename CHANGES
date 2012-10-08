@@ -1,0 +1,10 @@
+version 1.2:
+	- Fixed issue with fseek() that caused portagent to fail reading portagent.conf on some systems.
+	- Fixed issue with CHROOT causing DNS resolution failure. (resolving library inaccessible)
+	- Fixed issue with CHROOT causing "word" port resolution failure. (/etc/services inaccessible)
+	- Added IF DEFINED arbitrary definitions 'ascii', 'extended-ascii', 'readable', 'unreadable'.
+	- Added IF DEFINED explicit protocol definition 'imap'.
+	- Revised IF DEFINED definitions to more broadly match protocols.
+
+version 1.1:
+	- Initial release.

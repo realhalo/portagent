@@ -1,0 +1,38 @@
+dnl Process this file with autoconf to produce a configure script.
+AC_INIT(src/portagent.h, 1.x, v9@fakehalo.us)
+
+AC_PREFIX_DEFAULT(/usr)
+AC_CONFIG_HEADER([config.h])
+
+AC_PROG_CC
+AC_PROG_INSTALL
+AC_PROG_MAKE_SET
+
+AC_HEADER_STDC
+
+AC_CHECK_HEADERS([ctype.h errno.h fcntl.h grp.h pwd.h regex.h signal.h stdarg.h stdio.h stdlib.h string.h strings.h netdb.h time.h unistd.h arpa/inet.h sys/fcntl.h sys/file.h sys/resource.h sys/socket.h sys/types.h sys/time.h netinet/in.h])
+AC_CHECK_FUNCS([chroot getrlimit initsetproctitle memmem setproctitle setsid setservent endservent])
+
+AC_CHECK_LIB(nsl, gethostbyname)
+AC_CHECK_LIB(xnet, gethostbyname)
+AC_CHECK_LIB(socket, connect)
+
+AC_PROG_GCC_TRADITIONAL
+
+AC_ARG_ENABLE(pa-debug, [  --enable-pa-debug       create debug-mode binary for testing.], [padebug="yes"], [padebug="no"])
+if test "$padebug" = "yes" ; then
+AC_DEFINE(PA_DEBUG, 1, create debug-mode binary for testing.)
+fi
+
+if test $prefix = 'NONE';then
+xx_prefix="";
+prefix=/usr;
+mandir=/usr/share/man;
+else
+xx_prefix=$prefix;
+mandir=$prefix/man;
+fi
+AC_SUBST(xx_prefix)
+AC_SUBST(mandir)
+
+AC_OUTPUT([Makefile src/Makefile man/portagent.8 etc/portagent.conf])

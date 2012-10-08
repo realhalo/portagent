@@ -1,0 +1,14 @@
+SOURCES = conf.c misc.c msg.c net.c portagent.c title.c
+OBJECTS = conf.o misc.o msg.o net.o portagent.o title.o
+OUTPUT = portagent
+CC = gcc
+LIBS = @LIBS@
+CFLAGS = -Wall
+
+all: portagent
+
+portagent: $(OBJECTS)
+	$(CC) $(CFLAGS) -o $(OUTPUT) $(OBJECTS) $(LIBS)
+
+clean:
+	rm -f portagent *core* *.o

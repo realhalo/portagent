@@ -1,0 +1,112 @@
+#!@prefix@/sbin/portagent
+#
+# [LOGFILE 'filename']
+# [PIDFILE 'filename']
+# [CHROOT 'directory']
+# [USER 'user_name|uid']
+# [GROUP 'group_name|gid']
+#
+# LISTEN 'port' 
+#   [WITH 'host|ip']
+#   [BACKLOG 'num']
+#   [LIMIT 'num']
+#   [INITIAL BUFFER 'num|fmt']
+#   [QUEUE BUFFER 'num|fmt']
+#
+#     [WRITE [INSIDE|OUTSIDE] 'string']
+#
+#     [TIMEOUT 'seconds']
+#     [IF <DEFINED|LIKE|REGEXP> 'expr'] [IP [NOT] 'fmt'] [PORT [NOT] 'fmt']
+#       [USE 'hostname:port']
+#     ...
+#
+#     [TRY 'hostname:port']
+#       [WRITE [INSIDE|OUTSIDE] 'string']
+#
+#       [TIMEOUT 'seconds']
+#       [IF <DEFINED|LIKE|REGEXP> 'expr'] [IP [NOT] 'fmt'] [PORT [NOT] 'fmt']
+#         [USE 'hostname:port|-']
+#       ...
+#
+#    ...
+#
+# ...
+#
+##############################################################################
+
+LOGFILE 	'/var/log/portagent.log'
+PIDFILE 	'/var/run/portagent.pid'
+USER		'nobody'
+GROUP		'nogroup'
+CHROOT		'/tmp'
+
+# httpd/sshd forwarding on http/80.
+LISTEN '80'
+	BACKLOG '10'
+	LIMIT '100'
+	QUEUE BUFFER '100M'
+
+		# httpd: clients send data immediately, no
+		# try needed.
+		# (real httpd has been set to listen on 8080)
+		TIMEOUT '3'
+			IF DEFINED 'http'
+				USE 'localhost:8080'
+
+		# sshd: 3 seconds passed from above so it's
+		# not an http request, try out ssh instead.
+		TRY 'localhost:22'
+			TIMEOUT '3'
+				IF DEFINED 'ssh'
+					USE '-'
+
+	# nothing matched, drop. (max 6 seconds past)
+
+# identd/sshd forwarding on auth/113.
+LISTEN '113'
+	BACKLOG '5'
+	LIMIT '20'
+	QUEUE BUFFER '100M'
+
+		# identd: see if the client sent data to start.
+		# (real identd has been set to listen on 1313)
+		TIMEOUT '3'
+			IF DEFINED 'auth'
+				USE 'localhost:1313'
+
+		# sshd: 3 seconds passed from above so it's
+		# not an ident request, try out ssh instead.
+		TRY 'localhost:22'
+			TIMEOUT '3'
+				IF DEFINED 'ssh'
+					USE '-'
+
+	# nothing matched, drop. (max 6 seconds past)
+
+
+
+# httpd/httpsd/ftpd forwarding on https/443.
+LISTEN '443'
+	BACKLOG '5'
+	LIMIT '10'
+	INITIAL BUFFER '16K'
+	QUEUE BUFFER '100M'
+
+		# http/https: assume any initial data that is http
+		# to forward to 8080, any other initial data received
+		# will be assumed https and forward to 4343.
+		# (better method when OpenSSL is supported)
+		TIMEOUT '3'
+			IF DEFINED 'http'
+				USE 'localhost:8080'
+			IF DEFINED 'input'
+				USE 'localhost:4343'
+
+		# ftpd: try an internal ftp server after 3
+		# seconds of no data.
+		TRY 'localhost:21'
+			TIMEOUT '3'
+				IF DEFINED 'ftp'
+					USE '-'
+
+	# nothing matched, drop. (max 6 seconds past)

@@ -1,0 +1,466 @@
+NAME
+       portagent - proxy routing daemon for sharing ports
+
+SYNOPSIS
+       portagent -v
+       portagent [file.conf]
+
+DESCRIPTION
+       portagent  is a POSIX transparent proxy routing daemon that allows mul-
+       tiple arbitrary services to run on a single arbitrary  port.  The  main
+       intention  of  portagent is for situations that need more services open
+       to the world than open ports prohibit.
+
+       portagent works by analyzing the first input sent to the proxy  (porta-
+       gent)  then,  based on that input, forwards the connection to a defined
+       location; this makes portagent more of an art than a science.   certain
+       protocols  work  well  together, and the more services on a single port
+       the more degradation may occur.
+
+       some protocols expect the  client  to  send  data  first,  for  example
+       http/80  sends  its request without expecting any data from the server,
+       this is desired, and can be matched and forwarded immediately.  on  the
+       other side a service like ssh/22 expects the server to send data first,
+       for this portagent will 'tease' the client with a forwarded  connection
+       (using  the  TRY instruction listed further on) so that the server will
+       send data to the client in an attempt to invoke a response from  client
+       to then be matched and forwarded.
+
+       the  science  part of portagent comes into play when using multiple TRY
+       instructions to attempt to invoke a response from the  client,  by  the
+       second  TRY  instruction the connection will have invalid protocol data
+       sent to it from the previous TRY, however this may or  may  not  matter
+       depending on the protocol.  if a protocol is broken by this, it is usu-
+       ally easily noticeable when debugging/testing a portagent config  file.
+
+       portagent  config  options  have  the  following basic format: INSTRUC-
+       TION_NAME 'instruction_value', where instruction_value may contain  the
+       following escape codes: \\, \', \e, \v, \t, \r, \n, \xNN, and \NNN.
+
+       portagent  config  files  themselves  have  a very flexible instruction
+       hierarchy, a whole config file could be placed on one line with no spa-
+       ces  if needed.  however, it is best understood in the following schema
+       (format):
+
+       (items  in  '[]'  indicate  they  are  not  required,  '...'  indicates
+       allowance  for  multiple  hierarchy instances, '|' indicates one of two
+       choices)
+
+CONFIG SCHEMA
+       #!/usr/sbin/portagent
+       [LOGFILE 'filename']
+       [PIDFILE 'filename']
+       [CHROOT 'directory']
+       [USER 'user_name|uid']
+       [GROUP 'group_name|gid']
+
+       LISTEN 'port'
+         [WITH 'hostname|ip']
+         [BACKLOG 'num']
+         [LIMIT 'num']
+         [INITIAL BUFFER 'num|fmt']
+         [QUEUE BUFFER 'num|fmt']
+
+           [WRITE 'string']
+           [TIMEOUT 'num']
+
+           [IF <DEFINED|LIKE|REGEXP> 'expr']
+             [IP [NOT] 'fmt']
+             [PORT [NOT] 'fmt']
+               [USE 'hostname:port']
+           ...
+
+           [TRY 'hostname:port']
+
+             [WRITE 'string']
+             [TIMEOUT 'num']
+
+             [IF <DEFINED|LIKE|REGEXP> 'expr']
+               [IP [NOT] 'fmt']
+               [PORT [NOT] 'fmt']
+                 [USE 'hostname:port|-']
+             ...
+
+           ...
+
+        ...
+
+
+CONFIG DESCRIPTION
+       LOGFILE 'filename'
+              - info: located in root hierarchy.
+              - info: has no hierarchy of its own.
+              - info: single instance.
+              - info: not required.
+
+              sets a file to  write  connection  events  and  other  portagent
+              related  information  to.  this file will be locked until porta-
+              gent exits and any other instances of  portagent  will  exit  if
+              they  attempt  to  access the same file.  the CHROOT instruction
+              does not affect this instruction's path.
+
+
+       PIDFILE 'filename'
+              - info: located in root hierarchy.
+              - info: has no hierarchy of its own.
+              - info: single instance.
+              - info: not required.
+
+              sets a file to write the portagent background process  id  (pid)
+              to.   this  file  will  be  locked until portagent exits and any
+              other instances of portagent will exit if they attempt to access
+              the  same  file.   the  CHROOT  instruction does not affect this
+              instruction's path.
+
+
+       CHROOT 'directory'
+              - info: located in root hierarchy.
+              - info: has no hierarchy of its own.
+              - info: single instance.
+              - info: not required.
+              - info: need to run as root.
+
+              sets a specified directory to chroot to once portagent is loaded
+              and running.  this intended for security purposes, no files need
+              to be accessed after the CHROOT instruction has  been  executed,
+              so  any  blank  directory  will  do.   this instruction does not
+              affect the paths of the LOGFILE or PIDFILE instructions.
+
+
+       USER 'user_name|uid'
+              - info: located in root hierarchy.
+              - info: has no hierarchy of its own.
+              - info: single instance.
+              - info: not required.
+              - info: need to run as root.
+
+              switches the user id (uid) of portagent  after  all  ports  have
+              been  binded  to  and all files have been loaded.  this intended
+              for security purposes.
+
+
+       GROUP 'group_name|gid'
+              - info: located in root hierarchy.
+              - info: has no hierarchy of its own.
+              - info: single instance.
+              - info: not required.
+              - info: need to run as root.
+
+              switches the group id (gid) of portagent after  all  ports  have
+              been  binded  to  and all files have been loaded.  this intended
+              for security purposes.
+
+
+       LISTEN 'port'
+              - info: located in root hierarchy.
+              - info: has own hierarchy consisting of:
+              WITH, BACKLOG, LIMIT, INITIAL BUFFER, QUEUE BUFFER, WRITE, TIME-
+              OUT, IF, TRY, and USE.
+              - info: multiple instances allowed.
+              - info: required.
+
+              sets  the port to bind to accept new connections and initializes
+              all instructions that follow to  be  applied  to  the  specified
+              port.  LISTEN  will  also complete the previous LISTEN block, if
+              there is one.  (info: the protocol string representation can  be
+              used  instead  of  the numeric port value, ie. 'http' instead of
+              '80')
+
+
+       WITH 'hostname|ip'
+              - info: located in LISTEN hierarchy.
+              - info: has no hierarchy of its own.
+              - info: single instance.
+              - info: not required.
+              - info: default=any.
+
+              sets hostname/ip to bind the specified port to.  for example, if
+              '127.0.0.1' was used portagent would only allow incoming connec-
+              tions to connect if they connected to 127.0.0.1.
+
+
+       BACKLOG 'num'
+              - info: located in LISTEN hierarchy.
+              - info: has no hierarchy of its own.
+              - info: single instance.
+              - info: not required.
+              - info: default=5.
+
+              sets the number of allowed unhandled connections to be queued.
+
+
+       LIMIT 'num'
+              - info: located in LISTEN hierarchy.
+              - info: has no hierarchy of its own.
+              - info: single instance.
+              - info: not required.
+              - info: default=50.
+
+              sets the total number of allowed  incoming  connections  on  the
+              specified  port.  any connections after the specified limit will
+              be dropped immediately.
+
+
+       INITIAL BUFFER 'num|fmt'
+              - info: located in LISTEN hierarchy.
+              - info: has no hierarchy of its own.
+              - info: single instance.
+              - info: not required.
+              - info: default=16k.
+
+              sets the maximum size of the initial read buffer  per  incomming
+              connection,  this  is what IF instructions are compared against.
+              it should be noted that data can be dropped if  this  buffer  is
+              not set appropriately, it should be set to the maximum amount of
+              data that can be received before being passed to a USE  instruc-
+              tion.   if  data is still coming in before a USE instruction has
+              been hit the exceeding data will be dropped.   this  instruction
+              can  be  specified  via an arbitrary number (assumed bytes) or a
+              number followed by a B, K, M, or G.  (ie.  '8k'  would  be  8192
+              bytes)
+
+
+       QUEUE BUFFER 'num|fmt'
+              - info: located in LISTEN hierarchy.
+              - info: has no hierarchy of its own.
+              - info: single instance.
+              - info: not required.
+              - info: default=unlimited.
+
+              sets  the maximum size of the queue buffer per incomming connec-
+              tion.  each connection has a send queue for situations where one
+              side  can  send faster than the other can receive.  if the queue
+              grows larger than the specified limit  the  connection  will  be
+              dropped.   this  instruction  can  be specified via an arbitrary
+              number (assumed bytes) or a number followed by a B, K, M, or  G.
+              (ie. '8k' would be 8192 bytes)
+
+
+       WRITE 'string'
+              - info: located in LISTEN or TRY hierarchy.
+              - info: has no hierarchy of its own.
+              - info: multiple instances allowed.
+              - info: not required.
+
+              writes  the  specified  string  to  the incoming connection.  no
+              new-line character is appended, all normal  escape  formats  are
+              supported. (ie. '\r', '\n', '\xNN', '\NNN' and so on)
+
+
+       TIMEOUT 'num'
+              - info: located in LISTEN or TRY hierarchy.
+              - info: has no hierarchy of its own.
+              - info: multiple instances allowed.
+              - info: not required.
+
+              sets  the  number  of  seconds to wait for following IF instruc-
+              tion(s) to match incoming input.  once the  specified  time  has
+              passed  portagent  will  move  on to the next TRY instruction or
+              drop the connection if it is the last.
+
+
+       IF DEFINED 'protocol'
+              - info: located in LISTEN or TRY hierarchy.
+              - info: has own hierarchy consisting of:
+              IP, IP NOT, PORT, and PORT NOT.
+              - info: multiple instances allowed.
+              - info: not required.
+
+              if the incoming  connection's  initial  input/data  matches  the
+              specified  pre-defined  protocol  and  any  following IP or PORT
+              instructions also match, the following USE instruction  will  be
+              used--otherwise  it  will  not.   supported  protocols are: any,
+              input,  ascii,  extended-ascii, readable, unreadable, http, ssh, 
+              ftp,  smtp,  pop3,  imap  and  auth.  (any  stands for any value
+              including  nothing,  input  stands  for  any  value  but must be
+              something)
+
+
+       IF LIKE 'expr'
+              - info: located in LISTEN or TRY hierarchy.
+              - info: has own hierarchy consisting of:
+              IP, IP NOT, PORT, and PORT NOT.
+              - info: multiple instances allowed.
+              - info: not required.
+
+              if the incoming  connection's  initial  input/data  matches  the
+              specified  LIKE  expression  format and any following IP or PORT
+              instructions also match, the following USE instruction  will  be
+              used--otherwise  it  will not.  the LIKE format is a basic wild-
+              card comparison that can allow anything on the left or right  to
+              be  wildcard  matched  via  the  '%'  character.   for  example,
+              '%test%' would match if  the  connection's  input/data  has  the
+              string  'test'  anywhere in the input/data.  this instruction is
+              intended for when the IF DEFINED  instruction  has  no  suitable
+              pre-defined value associated with the protocol, or you just need
+              hands-on matching of the initial data.   this  instruction  sup-
+              ports  null-byte  comparisons if needed. (signified by '\x00' or
+              '\000')
+
+
+       IF REGEXP 'expr'
+              - info: located in LISTEN or TRY hierarchy.
+              - info: has own hierarchy consisting of:
+              IP, IP NOT, PORT, and PORT NOT.
+              - info: multiple instances allowed.
+              - info: not required.
+
+              if the incoming  connection's  initial  input/data  matches  the
+              specified the connection's input/data has the string 'test' any-
+              where in the input/data.   this  instruction  does  not  support
+              null-byte  comparisons,  use  the  IF LIKE instruction for that.
+              this instruction is intended for when the IF DEFINED instruction
+              has  no suitable pre-defined value associated with the protocol,
+              or you just need hands-on matching of the initial data.
+
+
+       IP [NOT] 'fmt'
+              - info: located in IF hierarchy.
+              - info: has no hierarchy of its own.
+              - info: multiple instances allowed.
+              - info: not required.
+
+              if the specified ip format matches, along with any preceding  or
+              following  IF  or  PORT  restrictions,  then  the  following USE
+              instruction will be used.  the ip format can be specified as  an
+              ip    or    a    range.   (ie.   '127.0.0.1',   '127.*.*.*'   or
+              '127.1-255.1-255.1-255')
+
+
+       PORT [NOT] 'fmt'
+              - info: located in IF hierarchy.
+              - info: has no hierarchy of its own.
+              - info: multiple instances allowed.
+              - info: not required.
+
+              if the specified port format matches, along with  any  preceding
+              or  following  IF  or  IP  restrictions,  then the following USE
+              instruction will be used.  the port format can be specified as a
+              number or a range of numbers. (ie. '4096' or '4000-4100')
+
+
+       USE 'hostname:port|-'
+              - info: located in LISTEN, TRY or IF hierarchy.
+              - info: has no hierarchy of its own.
+              - info: multiple instances allowed.
+              - info: not required. (pointless service without at least one)
+
+              sets  the final forwarding location for the incoming connection,
+              once this instruction has been executed  no  other  instructions
+              will be processed for the current connection.  if '-' is used it
+              will assume the active forwarding connection  currently  in  use
+              from  a  previous  TRY instruction.  (info: 'hostname' can be an
+              ip; 'port' can be the protocol string representation, instead of
+              the numeric port)
+
+
+       TRY 'hostname:port'
+              - info: located in LISTEN hierarchy.
+              - info: has own hierarchy consisting of:
+              WRITE, TIMEOUT, and IF.
+              - info: multiple instances allowed.
+              - info: not required.
+
+              sets  a (temporary) forward to forward data to the incoming con-
+              nection in an attempt to invoke initial data from  the  incoming
+              connection.   this  instruction  is  intended for protocols that
+              expect the server to send the initial data first.  USE '-'  will
+              commit the last TRY instruction as the (final) forward location.
+              (info: 'hostname' can be an  ip;  'port'  can  be  the  protocol
+              string representation, instead of the numeric port)
+
+EXAMPLE
+       #!/usr/sbin/portagent
+
+       LOGFILE   '/var/log/portagent.log'
+       PIDFILE   '/var/run/portagent.pid'
+       USER      'nobody'
+       GROUP     'nogroup'
+       CHROOT    '/tmp'
+
+       # httpd/sshd forwarding on http/80.
+       LISTEN '80'
+         BACKLOG '10'
+         LIMIT '100'
+         QUEUE BUFFER '100M'
+
+           # httpd: clients send data immediately, no
+           # try needed.
+           # (real httpd has been set to listen on 8080)
+           TIMEOUT '3'
+             IF DEFINED 'http'
+               USE 'localhost:8080'
+
+           # sshd: 3 seconds passed from above so it's
+           # not an http request, try out ssh instead.
+           TRY 'localhost:22'
+             TIMEOUT '3'
+               IF DEFINED 'ssh'
+                 USE '-'
+
+         # nothing matched, drop. (max 6 seconds past)
+
+       # identd/sshd forwarding on auth/113.
+       LISTEN '113'
+         BACKLOG '5'
+         LIMIT '20'
+         QUEUE BUFFER '100M'
+
+           # identd: see if the client sent data to start.
+           # (real identd has been set to listen on 1313)
+           TIMEOUT '3'
+             IF DEFINED 'auth'
+               USE 'localhost:1313'
+
+           # sshd: 3 seconds passed from above so it's
+           # not an ident request, try out ssh instead.
+           TRY 'localhost:22'
+             TIMEOUT '3'
+               IF DEFINED 'ssh'
+                 USE '-'
+
+         # nothing matched, drop. (max 6 seconds past)
+
+       # httpd/httpsd/ftpd forwarding on https/443.
+       LISTEN '443'
+         BACKLOG '5'
+         LIMIT '100'
+         INITIAL BUFFER '16K'
+         QUEUE BUFFER '100M'
+
+           # http/https: assume any initial data that is http
+           # to forward to 8080, any other initial data received
+           # will be assumed https and forward to 4343.
+           TIMEOUT '3'
+             IF DEFINED 'http'
+               USE 'localhost:8080'
+             IF DEFINED 'input'
+               USE 'localhost:4343'
+
+           # ftpd: try an internal ftp server after 3
+           # seconds of no data.
+           TRY 'localhost:21'
+             TIMEOUT '3'
+               IF DEFINED 'ftp'
+                 USE '-'
+
+         # nothing matched, drop. (max 6 seconds past)
+
+
+FILES
+       /etc/portagent.conf
+
+AUTHOR
+       Written by v9/fakehalo. [v9@fakehalo.us]
+
+BUGS
+       ftp and pop3 both expect the same initial input data ("USER username"),
+       therefore they should not be used together in the same LISTEN block.
+
+       Report bugs to <v9@fakehalo.us>.
+
+COPYRIGHT
+       Copyright © 2007 fakehalo.
+       This is free software; see the source for copying conditions.  There is
+       NO  warranty;  not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR
+       PURPOSE.

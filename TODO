@@ -1,0 +1,6 @@
+- add more IF DEFINED internals as they come and can be supported:
+-   https, nmbd, x11, nntp, socks4/5 proxy, http proxy, mysql, openvpn, lpd, snmp, ldap?, telnet?, finger?, cups?, gopher (for old times sake)
+- possibly add UDP support, although its use seems limited.
+- possibly add IPV6 support, but the whole point of portagent is for ipv4/firewall restrictions...could still have a use in the future though.
+- possibly add bandwidth throttle, although it doesn't seem like portagent's roll.
+- possibly add a REWRITE instruction, on-the-fly stream modification, not sure if it's needed for anything yet.
