@@ -1048,11 +1048,14 @@ void pa_listen_loop() {
 	unsigned int j, k, w;
 	char *this_ins, *ptr;
 
-char wtf[1024];
-unsigned int wtf_size=(2+8+2+16+2+8);
-
 	fd_set fds, wfds;
 	struct timeval tv;
+
+/*	NOT RESOLVED: leaving this here for future debugging. (relating to client/server code addition in 1.3)
+	NOT RESOLVED: v1.3 should not be commited without this having a resolution.
+
+	char wtf[1024];
+	unsigned int wtf_size=(2+8+2+16+2+8);
 
 	wtf[0] = 8;
 	wtf[1] = 0;
@@ -1094,7 +1097,7 @@ unsigned int wtf_size=(2+8+2+16+2+8);
 	wtf[35] = '1';
 	wtf[36] = '1';
 	wtf[37] = '1';
-
+*/
 
 	/* select() forever, hopefully. */
 	while(1) {
@@ -1183,9 +1186,9 @@ pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf, 1, 0);
 pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf+1, 2, 0);
 pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf+3, 30, 0);
 
+// pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf, wtf_size-2, 0);
+// pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf+(wtf_size-2), 2, 0);
 */
-//pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf, wtf_size-2, 0);
-//pa_bf_decrypt_str(i, PA_QUEUE_CONN, (unsigned char *)wtf+(wtf_size-2), 2, 0);
 
 						break;
 					case PA_IP:
